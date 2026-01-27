@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+
+# =========================
+# usage: ./timeline.sh app.log
+# =========================
+
+INPUT="$1"
+
+if [[ -z "$INPUT" || ! -f "$INPUT" ]]; then
+  echo "Usage: $0 <logfile>"
+  exit 1
+fi
+
+TMP="/tmp/timeline.$$"
+OUT="timeline-$(basename "$INPUT")"
+
+echo "Building timeline from $INPUT …"
+
+
+grep -E 'HTTP (Request|response)|transaction|account-verify|fee|token' "$INPUT" \
+| grep -v -E 'Headers|envoy|accept-encoding|user-agent' \
+| awk '
+{
+  ts=""; svc=""; cid=""; ip=""; path=""; sc=""; trace=""; msg=""
+
+  if (match($0, /[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:.]+/, a)) ts=a[0]
+  if (match($0, /service.:.*name.:.([^,'\'' ]+)/, a)) svc=a[1]
+  if (match($0, /clientId.:.([^,'\'' ]+)/, a)) cid=a[1]
+  if (match($0, /client_ip.:.([^,'\'' ]+)/, a)) ip=a[1]
+  if (match($0, /path.:.([^,'\'' ]+)/, a)) path=a[1]
+  if (match($0, /status_code.:.([0-9]+)/, a)) sc=a[1]
+  if (match($0, /trace.:.*id.:.([^,'\'' ]+)/, a)) trace=a[1]
+
+  if ($0 ~ /HTTP Request/)  msg="→ REQUEST"
+  else if ($0 ~ /HTTP response/) msg="← RESPONSE"
+  else if ($0 ~ /transaction/) msg="⚙ TRANSACTION"
+  else msg="∙ EVENT"
+
+  if (trace != "")
+    printf "%s|%s|%s|%s|%s|%s|%s|%s\n",
+      trace, ts, svc, cid, ip, msg, path, sc
+}
+' > "$TMP"
+
+
+sort -t'|' -k1,1 -k2,2 "$TMP" > "$TMP.sorted"
+
+
+awk -F'|' '
+BEGIN {
+  prev=""
+}
+{
+  trace=$1
+  ts=$2
+  svc=$3
+  cid=$4
+  ip=$5
+  msg=$6
+  path=$7
+  sc=$8
+
+  if (trace != prev) {
+    print ""
+    print "═══════════════════════════════════════════════"
+    print "TRACE: " trace " | client=" cid " | ip=" ip
+    print "═══════════════════════════════════════════════"
+    prev=trace
+  }
+
+  printf "%s  %-18s  %-14s %-12s %s %s\n",
+    ts, svc, msg, path, (sc != "" ? "status=" sc : "")
+}
+' "$TMP.sorted" | tee "$OUT"
+
+rm -f "$TMP" "$TMP.sorted"
+
+echo ""
+echo "Done. Output saved to $OUT"
