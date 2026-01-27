@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+# ======================================
+# usage: ./timeline.sh app.log
+# ======================================
+
 INPUT="$1"
 
 if [[ -z "$INPUT" || ! -f "$INPUT" ]]; then
@@ -10,66 +14,83 @@ fi
 OUT="timeline-$(basename "$INPUT")"
 TMP="/tmp/timeline.$$"
 
-echo "Parsing $INPUT …"
+echo "Processing multiline log: $INPUT"
+echo "Output: $OUT"
+echo ""
+
+# =====================================================
+# FAZA 1 + 2:
+# - sklejanie multiline
+# - parsowanie
+# =====================================================
 
 awk '
+# ---------- NOWY EVENT (linia z timestampem) ----------
+/^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9:.]+/ {
+  if (NR > 1) {
+    process(event)
+  }
+  event=$0
+  next
+}
+
+# ---------- LINIE DODATKOWE ----------
 {
-  ts=""; svc=""; cid=""; ip=""; path=""; sc=""; trace=""; msg="EVENT"
+  event = event " " $0
+}
 
-  # timestamp (różne formaty)
-  if (match($0, /[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9:.]+/, a)) ts=a[0]
+# ---------- KONIEC PLIKU ----------
+END {
+  process(event)
+}
 
-  # trace
-  if (match($0, /(trace|traceId|trace.id)[^a-zA-Z0-9]*([a-z0-9-]{8,})/, a)) trace=a[2]
+# ---------- FUNKCJA PRZETWARZANIA EVENTU ----------
+function process(line,   ts,svc,cid,ip,path,sc,trace,msg,a) {
 
-  # client
-  if (match($0, /(clientId|client.id|customerId)[^a-zA-Z0-9]*([0-9]+)/, a)) cid=a[2]
+  ts=svc=cid=ip=path=sc=trace=""
+  msg="EVENT"
 
-  # ip
-  if (match($0, /([0-9]{1,3}\.){3}[0-9]{1,3}/, a)) ip=a[0]
+  if (match(line, /^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9:.]+/, a)) ts=a[0]
+  if (match(line, /(trace|traceId|trace.id)[^a-zA-Z0-9]*([a-z0-9-]{8,})/, a)) trace=a[2]
+  if (match(line, /(clientId|client.id|customerId)[^0-9]*([0-9]+)/, a)) cid=a[2]
+  if (match(line, /([0-9]{1,3}\.){3}[0-9]{1,3}/, a)) ip=a[0]
+  if (match(line, /(service.name|serviceName|app)[^a-zA-Z0-9]*([a-zA-Z0-9-]+)/, a)) svc=a[2]
+  if (match(line, /(\/v[0-9]+\/[a-zA-Z0-9\/_-]+)/, a)) path=a[1]
+  if (match(line, /(status|status_code)[^0-9]*([0-9]{3})/, a)) sc=a[2]
 
-  # service
-  if (match($0, /(service.name|serviceName|app)[^a-zA-Z0-9]*([a-zA-Z0-9-]+)/, a)) svc=a[2]
+  if (line ~ /request/i) msg="→ REQUEST"
+  if (line ~ /response/i) msg="← RESPONSE"
+  if (line ~ /error|exception|fail/i) msg="✖ ERROR"
 
-  # path / url
-  if (match($0, /(\/v[0-9]+\/[a-zA-Z0-9\/-]+)/, a)) path=a[1]
-
-  # status
-  if (match($0, /(status|status_code)[^0-9]*([0-9]{3})/, a)) sc=a[2]
-
-  # message type
-  if ($0 ~ /request/i) msg="→ REQUEST"
-  if ($0 ~ /response/i) msg="← RESPONSE"
-  if ($0 ~ /error|exception|fail/i) msg="✖ ERROR"
-
-  # linia istotna = ma trace + coś od HTTP
-  if (trace != "" && (path != "" || msg != "EVENT"))
+  # interesuje nas tylko coś, co ma trace
+  if (trace != "")
     printf "%s|%s|%s|%s|%s|%s|%s|%s\n",
       trace, ts, svc, cid, ip, msg, path, sc
 }
 ' "$INPUT" > "$TMP"
 
-# sort: trace + czas
-sort -t'|' -k1,1 -k2,2 "$TMP" > "$TMP.sorted"
+# =====================================================
+# SORT + TIMELINE
+# =====================================================
 
-# timeline
+sort -t'|' -k1,1 -k2,2 "$TMP" | \
 awk -F'|' '
 BEGIN { prev="" }
 {
   if ($1 != prev) {
     print ""
-    print "════════════════════════════════════"
-    print "TRACE: " $1 "  client=" $4 "  ip=" $5
-    print "════════════════════════════════════"
+    print "════════════════════════════════════════════════════"
+    print "TRACE: " $1 " | client=" $4 " | ip=" $5
+    print "════════════════════════════════════════════════════"
     prev=$1
   }
 
-  printf "%s  %-15s %-12s %-25s %s\n",
+  printf "%s  %-15s %-12s %-32s %s\n",
     $2, $3, $6, $7, ($8 != "" ? "status=" $8 : "")
 }
-' "$TMP.sorted" | tee "$OUT"
+' | tee "$OUT"
 
-rm -f "$TMP" "$TMP.sorted"
+rm -f "$TMP"
 
 echo ""
-echo "Done → $OUT"
+echo "Done."
