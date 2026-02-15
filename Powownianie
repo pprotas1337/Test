@@ -1,0 +1,104 @@
+#!/bin/bash
+
+IAS="IAS"
+CASS="CASS"
+REPORT="ias_vs_cass_$(date +%Y%m%d_%H%M%S).txt"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+normalize() {
+    tr -d '\r' | sed 's/[[:space:]]\+/ /g' | sed 's/[[:space:]]*$//'
+}
+
+echo "=== POROWNANIE IAS (ZRODLO) vs CASS (CASSANDRA) ===" | tee "$REPORT"
+echo "Data: $(date)" | tee -a "$REPORT"
+echo "" | tee -a "$REPORT"
+
+# Normalizacja + sort + liczenie
+LC_ALL=C normalize < "$IAS"  | sort | uniq -c > .ias.count
+LC_ALL=C normalize < "$CASS" | sort | uniq -c > .cass.count
+
+IAS_TOTAL=$(awk '{s+=$1} END{print s}' .ias.count)
+CASS_TOTAL=$(awk '{s+=$1} END{print s}' .cass.count)
+
+echo "Rekordy w IAS  : $IAS_TOTAL" | tee -a "$REPORT"
+echo "Rekordy w CASS : $CASS_TOTAL" | tee -a "$REPORT"
+echo "" | tee -a "$REPORT"
+
+# Porównanie logiczne
+awk '
+FNR==NR {
+    key=""
+    for(i=2;i<=NF;i++) key=key $i " "
+    gsub(/[[:space:]]+$/,"",key)
+    cass[key]=$1
+    next
+}
+{
+    key=""
+    for(i=2;i<=NF;i++) key=key $i " "
+    gsub(/[[:space:]]+$/,"",key)
+    ias[key]=$1
+}
+END {
+    missing=0
+    over=0
+    count_diff=0
+    matched=0
+
+    for (k in ias) {
+        if (!(k in cass)) {
+            print "BRAK_W_CASS:", k
+            missing++
+        } else {
+            if (ias[k] != cass[k]) {
+                print "ROZNA_LICZBA:", k, "IAS="ias[k], "CASS="cass[k]
+                count_diff++
+            } else {
+                matched += ias[k]
+            }
+        }
+    }
+
+    for (k in cass) {
+        if (!(k in ias)) {
+            print "NADMIAR_W_CASS:", k
+            over++
+        }
+    }
+
+    print ""
+    print "=== PODSUMOWANIE ==="
+    print "BRAKUJACE_REKORDY:", missing
+    print "NADMIAROWE_REKORDY:", over
+    print "ROZNA_LICZNOSC:", count_diff
+    print "ZGODNE_REKORDY:", matched
+}
+' .cass.count .ias.count | tee -a "$REPORT"
+
+# Procent pokrycia IAS przez CASS
+COVERAGE=$(awk -v total="$IAS_TOTAL" '
+/ZGODNE_REKORDY:/ {matched=$2}
+END {
+    if (total>0)
+        printf "%.2f", (matched/total)*100
+    else
+        print "0.00"
+}' "$REPORT")
+
+echo "" | tee -a "$REPORT"
+echo "POKRYCIE IAS PRZEZ CASS: ${COVERAGE}%" | tee -a "$REPORT"
+
+if [[ "$COVERAGE" == "100.00" ]]; then
+    echo -e "${GREEN}✔ CASS pokrywa IAS w 100%${NC}"
+else
+    echo -e "${RED}✘ CASS NIE pokrywa IAS w 100%${NC}"
+fi
+
+rm .ias.count .cass.count
+
+echo ""
+echo -e "${YELLOW}Raport zapisany do: $REPORT${NC}"
