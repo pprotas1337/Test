@@ -1,0 +1,116 @@
+#!/bin/bash
+
+IAS="IAS"
+CASS="CASS"
+REPORT="ias_vs_cass_columns_$(date +%Y%m%d_%H%M%S).txt"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+normalize() {
+    tr -d '\r' | sed 's/[[:space:]]\+/ /g' | sed 's/[[:space:]]*$//'
+}
+
+echo "=== POROWNANIE KOLUMNOWE IAS vs CASS ===" | tee "$REPORT"
+echo "Data: $(date)" | tee -a "$REPORT"
+echo "" | tee -a "$REPORT"
+
+LC_ALL=C normalize < "$CASS" > .cass.norm
+LC_ALL=C normalize < "$IAS"  > .ias.norm
+
+awk -F'|' '
+
+function trim(x) {
+    gsub(/^[ \t]+|[ \t]+$/, "", x)
+    return x
+}
+
+function canon(x) {
+    x = trim(x)
+    if (tolower(x) == "null") x=""
+    return tolower(x)
+}
+
+FNR==NR {
+    key = canon($1) "|" canon($2)
+    cass[key]=$0
+    next
+}
+
+{
+    key = canon($1) "|" canon($2)
+    ias[key]=$0
+}
+
+END {
+
+    missing=0
+    over=0
+    diffcount=0
+    ok=0
+
+    for (k in ias) {
+
+        if (!(k in cass)) {
+            print "BRAK_W_CASS:", k
+            missing++
+            continue
+        }
+
+        split(ias[k], a, "|")
+        split(cass[k], b, "|")
+
+        max = (length(a) > length(b) ? length(a) : length(b))
+        rowdiff=0
+
+        for (i=1; i<=max; i++) {
+
+            va = canon(a[i])
+            vb = canon(b[i])
+
+            if (va != vb) {
+                if (rowdiff==0) {
+                    print "ROZNICA:", k
+                    rowdiff=1
+                }
+                print "  KOLUMNA", i
+                print "    IAS :", trim(a[i])
+                print "    CASS:", trim(b[i])
+                diffcount++
+            }
+        }
+
+        if (rowdiff==0) ok++
+    }
+
+    for (k in cass) {
+        if (!(k in ias)) {
+            print "NADMIAR_W_CASS:", k
+            over++
+        }
+    }
+
+    print ""
+    print "=== PODSUMOWANIE ==="
+    print "BRAKUJACE_REKORDY:", missing
+    print "NADMIAROWE_REKORDY:", over
+    print "ROZNICE_W_KOLUMNACH:", diffcount
+    print "ZGODNE_REKORDY:", ok
+}
+' .cass.norm .ias.norm | tee -a "$REPORT"
+
+echo ""
+
+if grep -q "BRAKUJACE_REKORDY: 0" "$REPORT" &&
+   grep -q "NADMIAROWE_REKORDY: 0" "$REPORT" &&
+   grep -q "ROZNICE_W_KOLUMNACH: 0" "$REPORT"; then
+    echo -e "${GREEN}✔ CASS jest logicznie zgodna z IAS${NC}"
+else
+    echo -e "${RED}✘ WYKRYTO ROZNICE${NC}"
+fi
+
+rm .cass.norm .ias.norm
+
+echo -e "${YELLOW}Raport zapisany do: $REPORT${NC}"
