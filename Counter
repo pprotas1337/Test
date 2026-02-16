@@ -1,0 +1,85 @@
+#!/bin/bash
+
+CASS="wynik-auth-cass.txt"
+IAS="wynik-auth-ias.txt"
+REPORT="compare_counts_$(date +%Y%m%d_%H%M%S).txt"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo "=== POROWNANIE LICZNIKOW IAS vs CASS ===" | tee "$REPORT"
+echo "Data: $(date)" | tee -a "$REPORT"
+echo "" | tee -a "$REPORT"
+
+awk -F': *' '
+FNR==NR {
+    cass[$1]=$2+0
+    next
+}
+{
+    ias[$1]=$2+0
+}
+END {
+    total_diff=0
+    total_mismatch=0
+
+    for (k in ias) {
+
+        c = (k in cass ? cass[k] : 0)
+        i = ias[k]
+
+        if (c != i) {
+
+            diff = c - i
+            total_diff += diff
+            total_mismatch++
+
+            if (i == 0) {
+                pct = "INF"
+            } else {
+                pct = sprintf("%.2f%%", (diff / i) * 100)
+            }
+
+            printf "%-45s CASS=%-6d IAS=%-6d DIFF=%-6d PCT=%s\n",
+                   k, c, i, diff, pct
+        }
+
+        delete cass[k]
+    }
+
+    for (k in cass) {
+        printf "%-45s CASS=%-6d IAS=%-6d DIFF=%-6d PCT=INF\n",
+               k, cass[k], 0, cass[k]
+        total_diff += cass[k]
+        total_mismatch++
+    }
+
+    print ""
+    print "=== PODSUMOWANIE ==="
+    print "POZYCJE_Z_ROZNICA:", total_mismatch
+    print "SUMA_ROZNIC:", total_diff
+}
+' "$CASS" "$IAS" | sort | tee -a "$REPORT"
+
+IAS_SUM=$(awk -F': *' '{s+=$2} END{print s}' "$IAS")
+CASS_SUM=$(awk -F': *' '{s+=$2} END{print s}' "$CASS")
+
+echo "" | tee -a "$REPORT"
+echo "SUMA IAS  : $IAS_SUM" | tee -a "$REPORT"
+echo "SUMA CASS : $CASS_SUM" | tee -a "$REPORT"
+
+GLOBAL_DIFF=$((CASS_SUM - IAS_SUM))
+
+echo "GLOBALNA_ROZNICA (CASS-IAS): $GLOBAL_DIFF" | tee -a "$REPORT"
+
+echo ""
+
+if [ "$GLOBAL_DIFF" -eq 0 ]; then
+    echo -e "${GREEN} Globalnie liczba operacji sie zgadza${NC}"
+else
+    echo -e "${RED} Globalna roznica wykryta${NC}"
+fi
+
+echo -e "${YELLOW}Raport zapisany do: $REPORT${NC}"
