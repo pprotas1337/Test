@@ -1,0 +1,6 @@
+awk '{
+if(match($0,/^\d{4}-\d{2}-\d{2}[^|]+/)) t=substr($0,RSTART,RLENGTH);
+if(match($0,/transaction=\{[^}]+\}/)) tr=substr($0,RSTART,RLENGTH);
+if(match($0,/path.: .[^'\'']+/)) p=substr($0,RSTART,RLENGTH);
+print t, tr, p
+}' plik.txt
