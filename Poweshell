@@ -1,0 +1,19 @@
+$urls = Get-Content "urls.txt"
+
+$result = foreach ($url in $urls) {
+    try {
+        $response = Invoke-RestMethod -Uri $url -TimeoutSec 5
+
+        if ($response.template.version) {
+            "$url ; $($response.template.version)"
+        }
+        else {
+            "$url ; BRAK"
+        }
+    }
+    catch {
+        "$url ; BRAK_ODPOWIEDZI"
+    }
+}
+
+$result | Out-File "raport.txt"
