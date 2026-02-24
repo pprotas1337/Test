@@ -1,0 +1,4 @@
+while read -r url; do
+    version=$(curl -s "$url" | jq -r '.template.version // "BRAK"')
+    echo "$url ; $version"
+done < urls.txt > raport.txt
