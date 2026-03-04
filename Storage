@@ -1,0 +1,257 @@
+#!/bin/bash
+
+BASE="/storage2"
+TMP="sizes.tmp"
+YEARS=$(seq 2005 2026)
+
+echo "=== Skanowanie storage (etap 1/2) ==="
+
+# jedno szybkie skanowanie katalogów rocznych
+du -sb $BASE/*/*/* 2>/dev/null > $TMP.du_years
+
+# jedno skanowanie katalogów dziennych (do diagnostyki)
+du -sb $BASE/*/*/*/*/* 2>/dev/null > $TMP.du_days
+
+echo "=== Agregacja danych ==="
+
+awk -v YEARS="$YEARS" '
+
+BEGIN{
+split(YEARS,Y," ")
+}
+
+# dane roczne
+FILENAME ~ /du_years/ {
+
+size=$1
+path=$2
+
+split(path,a,"/")
+comp=a[3]"/"a[4]
+year=a[5]
+
+sum[comp "|" year]+=size
+total_comp[comp]+=size
+total_storage+=size
+
+components[comp]=1
+
+}
+
+END{
+
+for(k in sum)
+print "DATA|"k"|"sum[k]
+
+for(c in total_comp)
+print "TOTAL|"c"|"total_comp[c]
+
+print "STORAGE|"total_storage
+
+}
+' $TMP.du_years > $TMP
+
+TOTAL_STORAGE=$(awk -F'|' '/^STORAGE/ {print $2}' $TMP)
+
+echo "=== Generowanie raportów ==="
+
+
+# ---------------- TABELA TXT ----------------
+
+{
+printf "Komponent"
+
+for y in $YEARS
+do
+printf " | %s" $y
+done
+
+printf " | SUMA | %%STORAGE\n"
+
+
+for comp in $(awk -F'|' '/^TOTAL/ {print $2}' $TMP | sort)
+do
+
+printf "%s" "$comp"
+
+sumcomp=0
+
+for y in $YEARS
+do
+
+size=$(awk -F'|' -v c="$comp" -v yr="$y" '
+$1=="DATA" && $2==c && $3==yr {print $4}' $TMP)
+
+if [ -z "$size" ]
+then
+printf " | BRAK"
+else
+gb=$(awk "BEGIN {printf \"%.2f\", $size/1024/1024/1024}")
+printf " | %sGB" "$gb"
+sumcomp=$(awk "BEGIN {print $sumcomp+$size}")
+fi
+
+done
+
+gbtotal=$(awk "BEGIN {printf \"%.2f\", $sumcomp/1024/1024/1024}")
+percent=$(awk "BEGIN {printf \"%.2f\", ($sumcomp/$TOTAL_STORAGE)*100}")
+
+printf " | %sGB | %s%%\n" "$gbtotal" "$percent"
+
+done
+
+} > raport.txt
+
+
+
+# ---------------- CSV DO EXCEL ----------------
+
+{
+printf "Komponent"
+
+for y in $YEARS
+do
+printf ",%s" $y
+done
+
+printf ",SUMA_GB,PERCENT\n"
+
+
+for comp in $(awk -F'|' '/^TOTAL/ {print $2}' $TMP | sort)
+do
+
+printf "%s" "$comp"
+
+sumcomp=0
+
+for y in $YEARS
+do
+
+size=$(awk -F'|' -v c="$comp" -v yr="$y" '
+$1=="DATA" && $2==c && $3==yr {print $4}' $TMP)
+
+if [ -z "$size" ]
+then
+printf ","
+else
+gb=$(awk "BEGIN {printf \"%.2f\", $size/1024/1024/1024}")
+printf ",%s" "$gb"
+sumcomp=$(awk "BEGIN {print $sumcomp+$size}")
+fi
+
+done
+
+gbtotal=$(awk "BEGIN {printf \"%.2f\", $sumcomp/1024/1024/1024}")
+percent=$(awk "BEGIN {printf \"%.2f\", ($sumcomp/$TOTAL_STORAGE)*100}")
+
+printf ",%s,%s\n" "$gbtotal" "$percent"
+
+done
+
+} > raport.csv
+
+
+
+# ---------------- RANKING ----------------
+
+awk -F'|' '/^TOTAL/ {print $2,$3}' $TMP |
+awk '{printf "%s %.2fGB\n",$1,$2/1024/1024/1024}' |
+sort -k2 -nr > ranking.txt
+
+
+
+# ---------------- TREND OSTATNI ROK ----------------
+
+echo "Komponent | Przyrost GB (ostatni rok)" > trend.txt
+
+for comp in $(awk -F'|' '/^TOTAL/ {print $2}' $TMP)
+do
+
+data=$(awk -F'|' -v c="$comp" '
+$1=="DATA" && $2==c {print $3,$4}' $TMP | sort -n)
+
+last=$(echo "$data" | tail -1)
+prev=$(echo "$data" | tail -2 | head -1)
+
+lastsize=$(echo $last | awk '{print $2}')
+prevsize=$(echo $prev | awk '{print $2}')
+
+if [ -n "$lastsize" ] && [ -n "$prevsize" ]
+then
+
+growth=$(awk "BEGIN {printf \"%.2f\", ($lastsize-$prevsize)/1024/1024/1024}")
+
+echo "$comp | $growth GB"
+
+fi
+
+done | sort -k3 -nr >> trend.txt
+
+
+
+# ---------------- ANOMALIE ----------------
+
+echo "Komponent | Rok | Wzrost %" > anomalies.txt
+
+for comp in $(awk -F'|' '/^TOTAL/ {print $2}' $TMP)
+do
+
+awk -F'|' -v c="$comp" '
+$1=="DATA" && $2==c {print $3,$4}
+' $TMP | sort -n | awk '
+{
+year[NR]=$1
+size[NR]=$2
+}
+
+END{
+
+for(i=2;i<=NR;i++){
+
+prev=size[i-1]
+curr=size[i]
+
+if(prev>0){
+
+growth=((curr-prev)/prev)*100
+
+if(growth>200){
+
+printf "%s | %s | %.2f%%\n", "'"$comp"'", year[i], growth
+
+}
+
+}
+
+}
+
+}
+'
+
+done | sort -k5 -nr >> anomalies.txt
+
+
+
+# ---------------- TOP 20 DNI ----------------
+
+echo "=== Analiza największych katalogów dziennych ==="
+
+awk '{
+printf "%.2fGB %s\n",$1/1024/1024/1024,$2
+}' $TMP.du_days |
+sort -nr |
+head -20 > top_days.txt
+
+
+
+rm $TMP $TMP.du_years $TMP.du_days
+
+
+echo ""
+echo "=== RAPORT GOTOWY ==="
+echo "raport.txt"
+echo "raport.csv"
+echo "ranking.txt"
+echo "trend.txt"
+echo "anomalies.txt"
+echo "top_days.txt"
