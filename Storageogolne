@@ -1,0 +1,174 @@
+#!/bin/bash
+
+BASE="/storage2"
+TMP="sizes.tmp"
+YEARS=$(seq 2005 2026)
+
+echo "=== Skanowanie storage ==="
+
+du -sb $BASE/*/*/* 2>/dev/null > $TMP.du_years
+du -sb $BASE/*/*/*/*/* 2>/dev/null > $TMP.du_days
+
+
+echo "=== Agregacja danych ==="
+
+awk '
+
+{
+
+size=$1
+path=$2
+
+split(path,a,"/")
+
+comp=a[3]        # tylko komponent
+year=a[5]
+
+sum[comp "|" year]+=size
+total_comp[comp]+=size
+total_storage+=size
+
+}
+
+END{
+
+for(k in sum)
+print "DATA|"k"|"sum[k]
+
+for(c in total_comp)
+print "TOTAL|"c"|"total_comp[c]
+
+print "STORAGE|"total_storage
+
+}
+
+' $TMP.du_years > $TMP
+
+
+TOTAL_STORAGE=$(awk -F'|' '/^STORAGE/ {print $2}' $TMP)
+
+
+
+# ---------------- TABELA TXT ----------------
+
+{
+printf "Komponent"
+
+for y in $YEARS
+do
+printf " | %s" $y
+done
+
+printf " | SUMA | %%STORAGE\n"
+
+
+for comp in $(awk -F'|' '/^TOTAL/ {print $2}' $TMP | sort)
+do
+
+printf "%s" "$comp"
+
+sumcomp=0
+
+for y in $YEARS
+do
+
+size=$(awk -F'|' -v c="$comp" -v yr="$y" '
+$1=="DATA" && $2==c && $3==yr {print $4}' $TMP)
+
+if [ -z "$size" ]
+then
+printf " | BRAK"
+else
+gb=$(awk "BEGIN {printf \"%.2f\", $size/1024/1024/1024}")
+printf " | %sGB" "$gb"
+sumcomp=$(awk "BEGIN {print $sumcomp+$size}")
+fi
+
+done
+
+gbtotal=$(awk "BEGIN {printf \"%.2f\", $sumcomp/1024/1024/1024}")
+percent=$(awk "BEGIN {printf \"%.2f\", ($sumcomp/$TOTAL_STORAGE)*100}")
+
+printf " | %sGB | %s%%\n" "$gbtotal" "$percent"
+
+done
+
+} > raport_component.txt
+
+
+
+# ---------------- CSV DO EXCEL ----------------
+
+{
+printf "Komponent"
+
+for y in $YEARS
+do
+printf ",%s" $y
+done
+
+printf ",SUMA_GB,PERCENT\n"
+
+
+for comp in $(awk -F'|' '/^TOTAL/ {print $2}' $TMP | sort)
+do
+
+printf "%s" "$comp"
+
+sumcomp=0
+
+for y in $YEARS
+do
+
+size=$(awk -F'|' -v c="$comp" -v yr="$y" '
+$1=="DATA" && $2==c && $3==yr {print $4}' $TMP)
+
+if [ -z "$size" ]
+then
+printf ","
+else
+gb=$(awk "BEGIN {printf \"%.2f\", $size/1024/1024/1024}")
+printf ",%s" "$gb"
+sumcomp=$(awk "BEGIN {print $sumcomp+$size}")
+fi
+
+done
+
+gbtotal=$(awk "BEGIN {printf \"%.2f\", $sumcomp/1024/1024/1024}")
+percent=$(awk "BEGIN {printf \"%.2f\", ($sumcomp/$TOTAL_STORAGE)*100}")
+
+printf ",%s,%s\n" "$gbtotal" "$percent"
+
+done
+
+} > raport_component.csv
+
+
+
+# ---------------- RANKING ----------------
+
+awk -F'|' '/^TOTAL/ {print $2,$3}' $TMP |
+awk '{printf "%s %.2fGB\n",$1,$2/1024/1024/1024}' |
+sort -k2 -nr > ranking_component.txt
+
+
+
+# ---------------- TOP 20 DNI ----------------
+
+awk '{
+printf "%.2fGB %s\n",$1/1024/1024/1024,$2
+}' $TMP.du_days |
+sort -nr |
+head -20 > top_days_component.txt
+
+
+
+rm $TMP $TMP.du_years $TMP.du_days
+
+
+echo ""
+echo "=== RAPORT GOTOWY ==="
+echo "raport_component.txt"
+echo "raport_component.csv"
+echo "ranking_component.txt"
+echo "top_days_component.txt"
