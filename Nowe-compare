@@ -1,0 +1,37 @@
+#!/bin/bash
+
+DIR="$1"
+DATE="$2"
+
+echo "Godzina | OK | ERROR | ERROR %"
+
+zgrep "$DATE" $DIR/*.gz 2>/dev/null | awk '
+
+{
+hour=substr($2,1,2)
+
+if($0 ~ /\|OK\|/) ok[hour]++
+if($0 ~ /\|ERROR\|/) err[hour]++
+}
+
+END{
+
+for(i=0;i<24;i++){
+
+h=sprintf("%02d",i)
+
+o=ok[h]+0
+e=err[h]+0
+total=o+e
+
+if(total>0)
+pct=(e/total)*100
+else
+pct=0
+
+printf "%s:00 | %d | %d | %.2f%%\n",h,o,e,pct
+
+}
+
+}
+'
