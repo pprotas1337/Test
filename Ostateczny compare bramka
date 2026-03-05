@@ -1,0 +1,55 @@
+#!/bin/bash
+
+DIR="$1"
+DATE_FROM="$2"
+DATE_TO="$3"
+
+echo ""
+printf "%-10s | %-5s | %-7s | %-8s\n" "Godzina" "OK" "ERROR" "ERROR %"
+echo "-------------------------------------"
+
+zgrep -h -E "$DATE_FROM|$DATE_TO" $DIR/*.gz 2>/dev/null | awk '
+
+{
+date=$1
+hour=substr($2,1,2)
+
+key=date" "hour
+
+if($0 ~ /\|OK\|/) ok[key]++
+if($0 ~ /\|ERROR\|/) err[key]++
+}
+
+END{
+
+for(k in ok){
+dates[k]=1
+}
+for(k in err){
+dates[k]=1
+}
+
+n=asorti(dates,sorted)
+
+for(i=1;i<=n;i++){
+
+split(sorted[i],a," ")
+
+date=a[1]
+hour=a[2]
+
+o=ok[sorted[i]]+0
+e=err[sorted[i]]+0
+total=o+e
+
+if(total>0)
+pct=(e/total)*100
+else
+pct=0
+
+printf "%s %s:00 | %-5d | %-7d | %6.2f%%\n",date,hour,o,e,pct
+
+}
+
+}
+'
