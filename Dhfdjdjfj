@@ -1,0 +1,73 @@
+#!/bin/bash
+
+# --- HELP / USAGE ---
+
+if [ "$#" -lt 3 ]; then
+    echo ""
+    echo "Użycie:"
+    echo "  $0 <katalog_logow> <data_od> <data_do>"
+    echo ""
+    echo "Przykład:"
+    echo "  $0 /storage2/DMZ/ISM 2026-03-04 2026-03-06"
+    echo ""
+    echo "Opis:"
+    echo "  Skrypt analizuje logi .gz i liczy liczbę OK oraz ERROR w podziale godzinowym."
+    echo "  Przeszukiwane są wszystkie katalogi pz_gtw_blog w podanym katalogu."
+    echo ""
+    echo "Format wyniku:"
+    echo "  DATA GODZINA | OK | ERROR | ERROR %"
+    echo ""
+    exit 1
+fi
+
+BASE="$1"
+DATE_FROM="$2"
+DATE_TO="$3"
+
+echo ""
+printf "%-16s | %-6s | %-7s | %-8s\n" "DATA GODZINA" "OK" "ERROR" "ERROR %"
+echo "------------------------------------------------------"
+
+find "$BASE" -path "*/pz_gtw_blog/*.gz" 2>/dev/null | \
+xargs zgrep -h -E "$DATE_FROM|$DATE_TO" 2>/dev/null | \
+awk '
+
+{
+date=$1
+hour=substr($2,1,2)
+
+key=date" "hour
+
+if($0 ~ /\|OK\|/) ok[key]++
+if($0 ~ /\|ERROR\|/) err[key]++
+}
+
+END{
+
+for(k in ok) all[k]=1
+for(k in err) all[k]=1
+
+n=asorti(all,sorted)
+
+for(i=1;i<=n;i++){
+
+split(sorted[i],a," ")
+
+date=a[1]
+hour=a[2]
+
+o=ok[sorted[i]]+0
+e=err[sorted[i]]+0
+total=o+e
+
+if(total>0)
+pct=(e/total)*100
+else
+pct=0
+
+printf "%s %s:00 | %-6d | %-7d | %6.2f%%\n",date,hour,o,e,pct
+
+}
+
+}
+'
