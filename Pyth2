@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+
+import re
+import sys
+
+
+def extract(pattern, text):
+    m = re.search(pattern, text)
+    return m.group(1) if m else "null"
+
+
+def get_timestamp(line):
+    i = line.find("/")
+    if i != -1 and len(line) >= i + 20:
+        return line[i+1:i+20].replace("T", " ")
+    return "null"
+
+
+def parse_line(line):
+
+    client_id = extract(r'client_id[:=]\s*(\d{8})', line)
+
+    timestamp = get_timestamp(line)
+
+    auth_annotation = extract(r'auth_annotation[:=]\s*([^,}]+)', line)
+
+    authorization_id = extract(r'authorization_id[:=]\s*\{val:\s*([^}]+)', line)
+
+    exec_date = extract(r'exec_date[:=]\s*([^,}]+)', line)
+
+    ccmf = extract(r'CCMF\/([^\s\/]+)', line)
+
+    return [
+        client_id,
+        timestamp,
+        auth_annotation,
+        authorization_id,
+        exec_date,
+        ccmf
+    ]
+
+
+def print_table(rows):
+
+    headers = [
+        "client_id",
+        "timestamp",
+        "auth_annotation",
+        "authorization_id",
+        "exec_date",
+        "CCMF"
+    ]
+
+    widths = [len(h) for h in headers]
+
+    for row in rows:
+        for i, v in enumerate(row):
+            widths[i] = max(widths[i], len(v))
+
+    def format_header(row):
+        return " " + " | ".join(row[i].ljust(widths[i]) for i in range(len(row)))
+
+    def format_row(row):
+        return " " + " | ".join(row[i].rjust(widths[i]) for i in range(len(row)))
+
+    print(format_header(headers))
+
+    sep = "-+-".join("-" * w for w in widths)
+    print(sep)
+
+    for r in rows:
+        print(format_row(r))
+
+
+def main():
+
+    if len(sys.argv) < 2:
+        print("Usage: python3 parser.py logfile")
+        sys.exit(1)
+
+    rows = []
+
+    with open(sys.argv[1]) as f:
+        for line in f:
+            if "CCMF/" in line:
+                rows.append(parse_line(line))
+
+    print_table(rows)
+
+
+if __name__ == "__main__":
+    main()
