@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+
+import re
+import sys
+
+def extract(pattern, text):
+    m = re.search(pattern, text)
+    return m.group(1) if m else "null"
+
+def parse_line(line):
+
+    client_id = extract(r'client_id:\s*(\d{8})', line)
+
+    timestamp = extract(r'/(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})', line)
+    if timestamp != "null":
+        timestamp = timestamp.replace("T", " ")
+    else:
+        m = re.search(r'/(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})', line)
+        if m:
+            timestamp = f"{m.group(1)} {m.group(2)}"
+        else:
+            timestamp = "null"
+
+    auth_annotation = extract(r'auth_annotation:\s*([^,}]+)', line)
+
+    authorization_id = extract(r'authorization_id:\s*\{val:\s*([^}]+)\}', line)
+
+    exec_date = extract(r'exec_date:\s*([^,}]+)', line)
+
+    ccmf = extract(r'CCMF\/([^\s]+)', line)
+
+    return [
+        client_id,
+        timestamp,
+        auth_annotation,
+        authorization_id,
+        exec_date,
+        ccmf
+    ]
+
+
+def print_table(rows):
+
+    headers = [
+        "client_id",
+        "timestamp",
+        "auth_annotation",
+        "authorization_id",
+        "exec_date",
+        "CCMF"
+    ]
+
+    widths = [len(h) for h in headers]
+
+    for row in rows:
+        for i,v in enumerate(row):
+            widths[i] = max(widths[i], len(v))
+
+    def format_row(row):
+        return "| " + " | ".join(v.ljust(widths[i]) for i,v in enumerate(row)) + " |"
+
+    print(format_row(headers))
+    print("|-" + "-|-".join("-"*w for w in widths) + "-|")
+
+    for r in rows:
+        print(format_row(r))
+
+
+def main():
+
+    if len(sys.argv) < 2:
+        print("usage: ./parser.py logfile")
+        sys.exit(1)
+
+    rows = []
+
+    with open(sys.argv[1]) as f:
+        for line in f:
+            if "CCMF/" in line:
+                rows.append(parse_line(line))
+
+    print_table(rows)
+
+
+if __name__ == "__main__":
+    main()
