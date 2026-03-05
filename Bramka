@@ -1,0 +1,16 @@
+#!/bin/bash
+
+LOGPATH="$1"
+DATE="$2"
+
+echo "Godzina | OK | ERROR"
+
+for h in $(seq -w 00 23)
+do
+
+OK=$(zgrep "$DATE $h:" $LOGPATH/*.gz 2>/dev/null | grep "|OK|" | wc -l)
+ERR=$(zgrep "$DATE $h:" $LOGPATH/*.gz 2>/dev/null | grep "|ERROR|" | wc -l)
+
+printf "%s | %s | %s\n" "$h:00" "$OK" "$ERR"
+
+done
