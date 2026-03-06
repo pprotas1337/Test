@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+
+import re
+import sys
+
+RED = "\033[91m"
+GREEN = "\033[92m"
+YELLOW = "\033[93m"
+RESET = "\033[0m"
+
+
+headers = [
+    "client_id",
+    "timestamp",
+    "auth_annotation",
+    "authorization_id",
+    "exec_date",
+    "CCMF"
+]
+
+
+def parse_line(line):
+    return [c.strip() for c in line.split("|")]
+
+
+def normalize(v):
+    return re.sub(r"\s+", "", v)
+
+
+def load_file(path):
+
+    data = {}
+
+    with open(path) as f:
+        for line in f:
+
+            if "|" not in line:
+                continue
+
+            cols = parse_line(line)
+
+            if len(cols) < 6:
+                continue
+
+            client_id = cols[0]
+            timestamp = cols[1]
+
+            if client_id == "client_id":
+                continue
+
+            key = (client_id, timestamp)
+
+            data[key] = cols
+
+    return data
+
+
+def compare(cass, logs):
+
+    keys = set(cass.keys()) | set(logs.keys())
+
+    diff_count = 0
+    missing_cass = 0
+    missing_logs = 0
+
+    for key in sorted(keys):
+
+        c = cass.get(key)
+        l = logs.get(key)
+
+        if c is None:
+            print(f"{RED}Missing in CASS{RESET}: {key}")
+            missing_cass += 1
+            continue
+
+        if l is None:
+            print(f"{RED}Missing in LOGS{RESET}: {key}")
+            missing_logs += 1
+            continue
+
+        for i in range(len(headers)):
+
+            v1 = normalize(c[i])
+            v2 = normalize(l[i])
+
+            if v1 != v2:
+
+                diff_count += 1
+
+                print(f"\n{YELLOW}Difference found{RESET}")
+                print(f"client_id  : {key[0]}")
+                print(f"timestamp  : {key[1]}")
+                print(f"field      : {headers[i]}")
+                print(f"{RED}cass value : {c[i]}{RESET}")
+                print(f"{GREEN}log value  : {l[i]}{RESET}")
+
+    print("\n------ SUMMARY ------")
+    print(f"records checked : {len(keys)}")
+    print(f"{YELLOW}differences     : {diff_count}{RESET}")
+    print(f"{RED}missing in cass : {missing_cass}{RESET}")
+    print(f"{RED}missing in logs : {missing_logs}{RESET}")
+
+
+def main():
+
+    if len(sys.argv) != 3:
+        print("Usage: python3 compare.py cass.txt log.txt")
+        sys.exit(1)
+
+    cass = load_file(sys.argv[1])
+    logs = load_file(sys.argv[2])
+
+    compare(cass, logs)
+
+
+if __name__ == "__main__":
+    main()
