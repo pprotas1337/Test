@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+
+import re
+import sys
+import base64
+import xml.etree.ElementTree as ET
+
+
+HEADERS = [
+"clientid",
+"timestamp",
+"amount_curr",
+"amount_val",
+"auth_annotation",
+"auth_ccmf",
+"authorization_details",
+"authorization_tool",
+"card_number",
+"card_type",
+"ccmf_name",
+"destination_account",
+"oper_type",
+"payment_date"
+]
+
+
+def extract(pattern, text):
+    m = re.search(pattern, text)
+    return m.group(1) if m else "null"
+
+
+def extract_timestamp(line):
+    m = re.search(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', line)
+    return m.group(0).replace("T", " ") if m else "null"
+
+
+def decode_xml(base64_string):
+
+    try:
+        xml_bytes = base64.b64decode(base64_string)
+        xml_str = xml_bytes.decode("utf-8", errors="ignore")
+        root = ET.fromstring(xml_str)
+
+        card_number = root.findtext(".//card-number", default="null")
+        card_type = root.findtext(".//card-type", default="null")
+        dest_account = root.findtext(".//destination/account", default="null")
+
+        return card_number, card_type, dest_account
+
+    except:
+        return "null", "null", "null"
+
+
+def parse_line(line):
+
+    clientid = extract(r'client_id:\s*(\d+)', line)
+
+    timestamp = extract_timestamp(line)
+
+    amount_curr = extract(r'curr:\s*([A-Z]+)', line)
+    amount_val = extract(r'val:\s*([\d\.]+)', line)
+
+    auth_annotation = extract(r'auth_annotation:\s*([^,]+)', line)
+
+    auth_ccmf = extract(r'CCMF\/([^\s]+)', line)
+
+    authorization_tool = extract(r'OK\s*\(([^ ]+)', line)
+
+    authorization_details = extract(r'day-idx:[^)]*number:\s*\d+', line)
+
+    authorization_details = authorization_details if authorization_details != "null" else "null"
+
+    card_number = extract(r'card_number:\s*([^\s,]+)', line)
+    card_type = "null"
+
+    ccmf_name = extract(r'ccmf_name:\s*([^\s,]+)', line)
+
+    destination_account = extract(r'destination_account:[^v]*val:\s*([0-9]+)', line)
+
+    oper_type = extract(r'oper_type:\s*([A-Z\-]+)', line)
+
+    payment_date = extract(r'payment_date:\s*(\d{4}-\d{2}-\d{2})', line)
+
+    # XML decode for paycard-transfer-preauth
+    xml_base64 = extract(r'enc:\s*base64,\s*val:\s*([^,\}]+)', line)
+
+    if xml_base64 != "null":
+        xml_card, xml_type, xml_dest = decode_xml(xml_base64)
+
+        if card_number == "null":
+            card_number = xml_card
+
+        if card_type == "null":
+            card_type = xml_type
+
+        if destination_account == "null":
+            destination_account = xml_dest
+
+    return [
+        clientid,
+        timestamp,
+        amount_curr,
+        amount_val,
+        auth_annotation,
+        auth_ccmf,
+        authorization_details,
+        authorization_tool,
+        card_number,
+        card_type,
+        ccmf_name,
+        destination_account,
+        oper_type,
+        payment_date
+    ]
+
+
+def print_table(rows):
+
+    widths = [len(h) for h in HEADERS]
+
+    for r in rows:
+        for i,v in enumerate(r):
+            widths[i] = max(widths[i], len(v))
+
+    def header():
+        return " | ".join(HEADERS[i].ljust(widths[i]) for i in range(len(HEADERS)))
+
+    def row(r):
+        return " | ".join(r[i].rjust(widths[i]) for i in range(len(r)))
+
+    print(header())
+    print("-+-".join("-"*w for w in widths))
+
+    for r in rows:
+        print(row(r))
+
+
+def main():
+
+    if len(sys.argv) < 2:
+        print("usage: python3 parser_auth.py logfile")
+        sys.exit(1)
+
+    rows = []
+
+    with open(sys.argv[1]) as f:
+        for line in f:
+            if "CCMF/" in line:
+                rows.append(parse_line(line))
+
+    print_table(rows)
+
+
+if __name__ == "__main__":
+    main()
